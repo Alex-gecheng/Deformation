@@ -1,3 +1,6 @@
+#ifndef MIPS_H
+#define MIPS_H
+
 #include <vector>
 #include <string>
 #include <Eigen/Dense>
@@ -5,7 +8,11 @@
 
 class MIPS {
 public:
-    using Constraint = std::pair<int, Eigen::Vector3d>; 
+    using Constraint = std::pair<int, Eigen::Vector3d>;
+
+    enum class EnergyType { MIPS, AMIPS, ISOMETRIC };
+
+    enum class AMIPSVariant { STANDARD, BARRIER };
 
     MIPS(const Eigen::Matrix3Xd& V,
         const Eigen::Matrix3Xi& F,
@@ -13,32 +20,33 @@ public:
 
     ~MIPS() = default;
 
-
-    // ========= 求解 =========
-    bool solve(int stages,int inner_iters,int final_iters,
+    bool solve(int stages, int inner_iters, int final_iters,
                double step_size = 1e-2,
-               double tol = 1e-8);
+               double tol = 1e-8,
+               int update_mode = 0);
 
-    // ========= 输出 =========
     const Eigen::Matrix2Xd& getUV() const { return UV; }
     double getEnergy() const { return total_energy; }
 
-    // ========= AMIPS 参数 =========
-    enum class EnergyType { MIPS, AMIPS, ISOMETRIC };
     void setEnergyType(EnergyType type) { energy_type = type; }
     void setPenaltyScale(double s) { penalty_scale = s; }
     void setIsoAlpha(double alpha) { iso_alpha = alpha; }
+    void setLogBarrierLambda(double lambda) { log_barrier_lambda = lambda; }
+    void setAMIPSVariant(AMIPSVariant v) { amips_variant = v; }
+
+    void setLineSearchParams(double max_step, double shrink_factor) {
+        ls_max_step = max_step;
+        ls_shrink_factor = shrink_factor;
+    }
 
 private:
-
-    Eigen::Matrix3Xd V;   // 3 x n
-    Eigen::Matrix3Xi F;   // 3 x m
-    Eigen::Matrix2Xd UV;  // 2 x n 当前2D参数化结果
+    Eigen::Matrix3Xd V;
+    Eigen::Matrix3Xi F;
+    mutable Eigen::Matrix2Xd UV;
 
     int nV = 0;
     int nF = 0;
 
-    // 约束
     std::vector<Constraint> constraints;
     std::vector<bool> is_fixed;
     std::vector<Eigen::Vector2d> constraint_initial_uv;
@@ -46,59 +54,71 @@ private:
     std::vector<Eigen::Vector2d> constraint_target_uv;
     double constraint_progress = 0.0;
 
-    // ==============================
-    // 三角形预处理缓存
-    // ==============================
     struct FaceData {
-        Eigen::Vector3i vid;   // 三角形顶点索引
-        Eigen::Matrix2d Dm;    // 参考2D局部坐标矩阵 [p1-p0, p2-p0]
+        Eigen::Vector3i vid;
+        Eigen::Matrix2d Dm;
         Eigen::Matrix2d Dm_inv;
-        double area = 0.0;     // 参考三角形面积
+        double area = 0.0;
         bool valid = true;
     };
 
     std::vector<FaceData> face_data;
 
-    // 优化状态
     double total_energy = 0.0;
 
-    // AMIPS 参数
     EnergyType energy_type = EnergyType::AMIPS;
-    double penalty_scale = 0.0;   // 默认 0：面积加权（稳定）；>0：指数加权（压制最大失真，2D:5, 3D:2）
+    AMIPSVariant amips_variant = AMIPSVariant::STANDARD;
+    double penalty_scale = 10.0;
     double iso_alpha = 0.5;
 
-private:
-    // ========= 初始化子步骤 =========
-    bool buildLocal2DReference(int dim);      // 每个三角形建立局部2D参考坐标
-    bool initializeUVWithBoundary();   // 初始UV
-    void applyConstraints();           // 把约束写进 UV
+    double log_barrier_lambda = 0.0;
 
-    // ========= 单三角形相关 =========
+    double ls_max_step = 1.0;
+    double ls_shrink_factor = 0.85;
+
+    std::vector<std::vector<int>> vertex_to_faces;
+    std::vector<int> vertex_colors;
+
+    double E_last_sweep = 1e20;
+
+    bool buildLocal2DReference(int dim);
+    bool initializeUVWithBoundary();
+    void applyConstraints();
+    void buildOneRingAdjacency();
+    void computeVertexColors();
+
     Eigen::Matrix2d computeJacobian(int fid) const;
     double computeFaceEnergy(int fid) const;
-    double computeFaceMIPS(int fid) const;          // 原始 MIPS
-    double computeFaceAMIPS(int fid) const;          // 对称保形
-    double computeFaceIsometric(int fid) const;      // isometric 能量
-    double computeFaceIsoGradWeight(int fid) const;  // exp(s*E) 用于梯度加权
-    Eigen::Matrix<double, 2, 3> computeFaceGradient(int fid) const;
+    double computeFaceMIPS(int fid) const;
+    double computeFaceAMIPS(int fid) const;
+    double computeFaceIsometric(int fid) const;
+    double computeAMIPSWeight(int fid) const;
+
+    Eigen::Matrix<double, 2, 3> computeFaceGradient(int fid);
+    Eigen::Matrix<double, 2, 3> computeFaceBaseGradient(int fid);
+    Eigen::Matrix<double, 2, 3> numericalFaceGradient(int fid, double eps = 1e-6) const;
+
     bool isFaceFlipped(int fid) const;
 
-    // ========= 全局能量 =========
     double computeTotalEnergy() const;
     void computeGradient(Eigen::Matrix2Xd& grad) const;
 
-    // ========= 优化 =========
-    bool gradientDescentStep(double step_size);
-    double backtrackingLineSearch(const Eigen::Matrix2Xd& grad,
-                                  double init_step = 1e-2,
-                                  double shrink = 0.5,
-                                  int max_trials = 20);
-    bool hasAnyFlippedFace() const;
-    void setConstraintProgress(double t);
-    bool advanceConstraintProgressSafely(double target_t,
-                                         int max_backtracks = 20,
-                                         double shrink = 0.5);
+    Eigen::Vector2d computeVertexGradient(int vid) const;
 
-    // ========= 工具 =========
-    Eigen::Matrix<double, 2, 3> numericalFaceGradient(int fid, double eps = 1e-6) const;
+    int gradientDescentSweep_GaussSeidel(double step_base);
+    int gradientDescentSweep_Jacobi(double step_base);
+    int gradientDescentSweep_Colored(double step_base);
+    int gradientDescentSweep(double step_base);
+    int gradientDescentSweep(double step_base, int mode);
+
+    double computeVertexOneRingBoundary(int vid) const;
+    bool wouldCauseFlip(int vid, const Eigen::Vector2d& new_pos) const;
+    bool lineSearchForVertex(int vid, const Eigen::Vector2d& grad, double& step_size);
+
+    void setConstraintProgress(double t);
+    bool advanceConstraintProgressSoft(double target_t, double E_bound,
+                                        int repair_iters = 20, int max_attempts = 10);
+    bool hasAnyFlippedFace() const;
 };
+
+#endif // MIPS_H
