@@ -1,0 +1,30 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+            "label": "CMake Configure Release (Preset)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--preset",
+                "cmake-default",
+            ],
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
+            "label": "CMake Build Release (Preset)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "--preset",
+                "cmake-default",
+            ],
+            "problemMatcher": ["$gcc"],
+            "group": "build",
+            //"dependsOn": "CMake Configure Release (Preset)"
+        }
+        
+	]
+}

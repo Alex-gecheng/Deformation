@@ -1,0 +1,22 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "cmake-default",
+      "displayName": "Default Config",
+      "description": "Ninja + Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/build/install"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "cmake-default",
+      "configurePreset": "cmake-default"
+    }
+  ]
+}
